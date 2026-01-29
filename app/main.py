@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from app.api.routes import router as api_router
 from app.ui import router as ui_router
 from app.config import settings
@@ -29,14 +30,10 @@ app.include_router(api_router)
 app.include_router(ui_router)
 
 
-@app.get("/")
+@app.get("/", include_in_schema=False)
 async def root():
-    return {
-        "message": "RAG Service API",
-        "version": settings.APP_VERSION,
-        "docs": "/docs",
-        "ui": "/ui"
-    }
+    # Redirect root → UI so base URL opens the chat UI directly
+    return RedirectResponse(url="/ui", status_code=307)
 
 
 @app.get("/health")
