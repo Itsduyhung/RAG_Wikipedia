@@ -200,17 +200,19 @@ async def ui_page() -> str:
                 statusEl.textContent = "Đang suy nghĩ...";
 
                 try {
+                    const ctrl = new AbortController();
+                    const to = setTimeout(() => ctrl.abort(), 180000);
                     const res = await fetch("/api/v1/chat", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ question: q, document_ids: null, verbose: false }),
+                        signal: ctrl.signal,
                     });
-
+                    clearTimeout(to);
                     if (!res.ok) {
-                        const t = await res.text();
-                        throw new Error("Lỗi " + res.status + ": " + t);
+                        const txt = await res.text();
+                        throw new Error("Lỗi " + res.status + ": " + txt);
                     }
-
                     const data = await res.json();
                     const answer = data.answer || "[Không nhận được câu trả lời]";
                     appendMsg("bot", answer);

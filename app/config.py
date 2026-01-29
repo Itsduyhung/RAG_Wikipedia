@@ -18,12 +18,16 @@ class Settings(BaseSettings):
     REDIS_DB: int = 0
     REDIS_URL: str = "redis://localhost:6379/0"
     
-    # Google AI
+    # Google AI (optional, khi không dùng Ollama)
     GEMINI_API_KEY: str = ""
-    # Sử dụng gemini-embedding-001 với Matryoshka truncation về 768 dimensions
-    # Model tạo 3072d nhưng truncate về 768d để tiết kiệm storage
-    EMBEDDING_MODEL_NAME: str = "models/gemini-embedding-001"
+    # Ollama local (trong Docker dùng http://ollama:11434, ngoài Docker dùng http://localhost:11434)
+    OLLAMA_BASE_URL: str = "http://ollama:11434"
+    # Models: LLM và embedding (Ollama model names)
+    LLM_MODEL_NAME: str = "qwen2.5:1.5b"
+    EMBEDDING_MODEL_NAME: str = "nomic-embed-text"
     DIMENSION_OF_MODEL: int = 768
+    # Context size cho Ollama chat (qwen2.5:1.5b = 2048; mistral = 8192)
+    OLLAMA_NUM_CTX: int = 2048
     
     # Pinecone (Legacy - optional, for backward compatibility)
     PINECONE_API_KEY: Optional[str] = None

@@ -35,9 +35,41 @@ docker-compose up -d --build
 Hệ thống sẽ khởi động:
 
 - **FastAPI** (port 8000)
-- **PostgreSQL** với pgvector (port 5432)
+- **PostgreSQL** với pgvector (port 5433)
 - **Redis** (port 6379)
+- **Ollama** (port 11434) – LLM + embeddings local
 - **RQ Worker** (background processing)
+
+### 2b. Pull Ollama models (lần đầu)
+
+LLM và embedding chạy qua Ollama. Cần pull 2 model trong container Ollama:
+
+**Cách 1 – Init profile (tự động pull qua HTTP):**
+
+```bash
+docker-compose --profile init run --rm ollama_init
+```
+
+**Cách 2 – Pull tay trong container:**
+
+```bash
+docker-compose exec ollama ollama pull mistral:latest
+docker-compose exec ollama ollama pull nomic-embed-text
+```
+
+Sau khi pull xong, chat và semantic search mới chạy đúng. Nếu trước đó đã dùng embedding khác, nên **re-upload / re-process** tài liệu để tạo lại embedding bằng `nomic-embed-text`.
+
+**Model Ollama chạy nhanh hơn (CPU / ít RAM):**
+
+| Model | Kích thước | Ghi chú |
+|-------|------------|--------|
+| **phi3:mini** | ~2.2GB | 3.8B, cân bằng tốc độ/chất lượng, hay dùng cho chat nhanh |
+| **llama3.2:3b** | ~2GB | 3B, hỗ trợ tiếng Việt ổn |
+| **qwen2.5:1.5b** hoặc **qwen2.5:3b** | ~1–2GB | Rất nhanh, ít RAM |
+| **tinyllama** | ~638MB | 1.1B, nhanh nhất, chất lượng thấp hơn |
+| **gemma2:2b** | ~1.5GB | Nhẹ, chạy tốt trên CPU |
+
+Chỉ cần đổi trong `.env`: `LLM_MODEL_NAME=phi3:mini` (hoặc tên trên), rồi pull model tương ứng: `docker-compose exec ollama ollama pull phi3:mini`. **Embedding** giữ `nomic-embed-text` (đã nhẹ ~274MB); không cần đổi nếu chỉ muốn chat nhanh hơn.
 
 ### 3. Access API
 

@@ -34,6 +34,42 @@ services:
       timeout: 5s
       retries: 5
 
+  # Ollama local (LLM + embeddings) - chạy cùng Docker, không cần cài trên máy
+  ollama:
+    image: ollama/ollama:latest
+    container_name: rag_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  # Pull models qua Ollama HTTP API. Chạy tay: docker-compose --profile init run --rm ollama_init
+  ollama_init:
+    image: curlimages/curl:latest
+    container_name: rag_ollama_init
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        sleep 15
+        echo "Pulling mistral:latest..."
+        curl -sSf -X POST http://ollama:11434/api/pull -d '{"name":"mistral:latest"}'
+        echo "Pulling nomic-embed-text..."
+        curl -sSf -X POST http://ollama:11434/api/pull -d '{"name":"nomic-embed-text"}'
+        echo "Done."
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+    profiles:
+      - init
+
   # FastAPI application
   api:
     build: .
@@ -43,8 +79,10 @@ services:
       REDIS_URL: redis://redis:6379/0
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
-      EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL_NAME:-models/gemini-embedding-001}
+      OLLAMA_BASE_URL: http://ollama:11434
+      EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL_NAME:-nomic-embed-text}
+      LLM_MODEL_NAME: ${LLM_MODEL_NAME:-qwen2.5:1.5b}
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-2048}
       DIMENSION_OF_MODEL: ${DIMENSION_OF_MODEL:-768}
     ports:
       - "8000:8000"
@@ -57,6 +95,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      ollama:
+        condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   # RQ Worker for process queue
@@ -68,8 +108,10 @@ services:
       REDIS_URL: redis://redis:6379/0
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
-      EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL_NAME:-models/gemini-embedding-001}
+      OLLAMA_BASE_URL: http://ollama:11434
+      EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL_NAME:-nomic-embed-text}
+      LLM_MODEL_NAME: ${LLM_MODEL_NAME:-qwen2.5:1.5b}
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-2048}
       DIMENSION_OF_MODEL: ${DIMENSION_OF_MODEL:-768}
     volumes:
       - ./data:/app/data
@@ -80,8 +122,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      ollama:
+        condition: service_healthy
     command: rq worker process --url redis://redis:6379/0
 
 volumes:
   postgres_data:
   redis_data:
+  ollama_data:

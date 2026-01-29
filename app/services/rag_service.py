@@ -7,12 +7,13 @@ import json
 import re
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
 from app.config import settings
 from app.services.search_service import SearchService
+from app.services.rate_limiter import get_gemini_rate_limiter
 
 
 class RAGService:
@@ -21,8 +22,7 @@ class RAGService:
     def __init__(
         self,
         db: Session,
-        # Ưu tiên lấy từ env để dễ deploy, giữ Gemini 2.0 (không dùng bản -exp)
-        model_name: str = os.getenv("LLM_MODEL_NAME", "gemini-2.0-flash"),
+        model_name: Optional[str] = None,
         temperature: float = 0.1,
         top_k: int = 20,
         bm25_weight: float = 0.6,
@@ -41,13 +41,16 @@ class RAGService:
         self.bm25_weight = bm25_weight
         self.semantic_weight = semantic_weight
         
-        # Initialize LLM
-        print(f"🤖 Initializing {model_name}...")
-        self.llm = ChatGoogleGenerativeAI(
+        # Initialize LLM với Ollama local (model từ settings; num_ctx phù hợp model nhỏ)
+        model_name = model_name or settings.LLM_MODEL_NAME
+        base = getattr(settings, "OLLAMA_BASE_URL", "http://host.docker.internal:11434") or "http://host.docker.internal:11434"
+        num_ctx = getattr(settings, "OLLAMA_NUM_CTX", 2048)
+        print(f"🤖 Initializing {model_name} via Ollama ({base}), num_ctx={num_ctx}...")
+        self.llm = ChatOllama(
             model=model_name,
-            api_key=settings.GEMINI_API_KEY,
+            base_url=base,
             temperature=temperature,
-            convert_system_message_to_human=True
+            num_ctx=num_ctx,
         )
         
         # Main RAG prompt
@@ -139,6 +142,9 @@ CONTEXT:
         context = self._format_docs(docs[:min(len(docs), 8)])
         
         try:
+            # Rate limiting: đảm bảo không vượt quá 15 RPM
+            get_gemini_rate_limiter().wait_if_needed()
+            
             raw = self.alias_chain.invoke({
                 "question": question, 
                 "context": context
@@ -336,6 +342,9 @@ CONTEXT:
         # Generate answer
         print("\n💬 Generating answer...")
         try:
+            # Rate limiting: đảm bảo không vượt quá 15 RPM
+            get_gemini_rate_limiter().wait_if_needed()
+            
             answer = self.rag_chain.invoke({"docs": docs, "question": question})
             answer = (answer or "").strip()
         except Exception as e:

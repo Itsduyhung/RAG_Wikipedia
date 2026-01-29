@@ -1,22 +1,19 @@
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_ollama import OllamaEmbeddings
 from app.config import settings
-from pydantic import SecretStr
 import numpy as np
 from typing import List
-import os
+from app.services.rate_limiter import get_gemini_rate_limiter
 
 
 class EmbeddingService:
-    """Service để tạo embeddings với Matryoshka truncation và normalization"""
+    """Service tạo embeddings bằng Ollama local (nomic-embed-text, 768d)"""
     
     def __init__(self):
-        # Sử dụng gemini-embedding-001 với output_dimensionality=768
-        # Model này tạo 3072 dimensions nhưng truncate về 768 dimensions
-        self.embeddings = GoogleGenerativeAIEmbeddings(
+        base = getattr(settings, "OLLAMA_BASE_URL", "http://host.docker.internal:11434") or "http://host.docker.internal:11434"
+        self.embeddings = OllamaEmbeddings(
             model=settings.EMBEDDING_MODEL_NAME,
-            api_key=SecretStr(settings.GEMINI_API_KEY)
+            base_url=base,
         )
-        # Set output dimensionality for Matryoshka truncation
         self.output_dimensionality = settings.DIMENSION_OF_MODEL
     
     def _normalize_embedding(self, embedding: List[float]) -> List[float]:
@@ -35,49 +32,39 @@ class EmbeddingService:
         """
         Tạo embedding cho một đoạn text với truncation và normalization
         """
-        # Tạo embedding với output_dimensionality
-        from google import genai
-        from google.genai import types
+        # Rate limiting: đảm bảo không vượt quá 15 RPM
+        get_gemini_rate_limiter().wait_if_needed()
         
-        client = genai.Client(api_key=settings.GEMINI_API_KEY)
-        result = client.models.embed_content(
-            model=settings.EMBEDDING_MODEL_NAME,
-            contents=text,
-            config=types.EmbedContentConfig(output_dimensionality=self.output_dimensionality)
-        )
+        # Gọi Ollama embeddings (nomic-embed-text)
+        embedding = self.embeddings.embed_query(text)
         
-        if result.embeddings and len(result.embeddings) > 0:
-            embedding = list(result.embeddings[0].values)
-            # Normalize để đảm bảo chất lượng
-            return self._normalize_embedding(embedding)
+        # Truncate về output_dimensionality nếu cần (ví dụ từ 1536 -> 768)
+        if len(embedding) > self.output_dimensionality:
+            embedding = embedding[: self.output_dimensionality]
         
-        raise ValueError("Failed to generate embedding")
+        # Normalize để đảm bảo chất lượng
+        return self._normalize_embedding(embedding)
     
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """
         Tạo embeddings cho nhiều documents với truncation và normalization
         """
-        from google import genai
-        from google.genai import types
-        
-        client = genai.Client(api_key=settings.GEMINI_API_KEY)
-        
         # Batch embed với output_dimensionality
         embeddings: List[List[float]] = []
+        rate_limiter = get_gemini_rate_limiter()
+        
         for text in texts:
-            result = client.models.embed_content(
-                model=settings.EMBEDDING_MODEL_NAME,
-                contents=text,
-                config=types.EmbedContentConfig(output_dimensionality=self.output_dimensionality)
-            )
+            # Rate limiting: đảm bảo không vượt quá 15 RPM
+            rate_limiter.wait_if_needed()
             
-            if result.embeddings and len(result.embeddings) > 0:
-                embedding = list(result.embeddings[0].values)
-                # Normalize từng embedding
-                normalized = self._normalize_embedding(embedding)
-                embeddings.append(normalized)
-            else:
-                raise ValueError(f"Failed to generate embedding for text: {text[:50]}...")
+            embedding = self.embeddings.embed_query(text)
+            # Truncate về output_dimensionality nếu cần
+            if len(embedding) > self.output_dimensionality:
+                embedding = embedding[: self.output_dimensionality]
+            
+            # Normalize từng embedding
+            normalized = self._normalize_embedding(embedding)
+            embeddings.append(normalized)
         
         return embeddings
 
