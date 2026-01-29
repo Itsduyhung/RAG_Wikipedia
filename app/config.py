@@ -20,6 +20,19 @@ class Settings(BaseSettings):
     
     # Google AI (optional, khi không dùng Ollama)
     GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-1.5-flash"
+    GEMINI_EMBEDDING_MODEL: str = "models/text-embedding-004"
+
+    # OpenAI (optional)
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-4o-mini"
+    OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
+
+    # Provider selection
+    # - ollama: local/self-hosted (Docker compose)
+    # - gemini/openai: for Render deployment (no Ollama available)
+    LLM_PROVIDER: str = "ollama"
+    EMBEDDING_PROVIDER: str = "ollama"
     # Ollama local (trong Docker dùng http://ollama:11434, ngoài Docker dùng http://localhost:11434)
     OLLAMA_BASE_URL: str = "http://ollama:11434"
     # Models: LLM và embedding (Ollama model names)

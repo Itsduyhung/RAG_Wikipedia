@@ -8,6 +8,8 @@ import re
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
@@ -41,17 +43,38 @@ class RAGService:
         self.bm25_weight = bm25_weight
         self.semantic_weight = semantic_weight
         
-        # Initialize LLM với Ollama local (model từ settings; num_ctx phù hợp model nhỏ)
+        # Initialize LLM (Ollama / OpenAI / Gemini)
+        provider = getattr(settings, "LLM_PROVIDER", "ollama").lower()
         model_name = model_name or settings.LLM_MODEL_NAME
-        base = getattr(settings, "OLLAMA_BASE_URL", "http://host.docker.internal:11434") or "http://host.docker.internal:11434"
-        num_ctx = getattr(settings, "OLLAMA_NUM_CTX", 2048)
-        print(f"🤖 Initializing {model_name} via Ollama ({base}), num_ctx={num_ctx}...")
-        self.llm = ChatOllama(
-            model=model_name,
-            base_url=base,
-            temperature=temperature,
-            num_ctx=num_ctx,
-        )
+
+        if provider == "ollama":
+            base = getattr(settings, "OLLAMA_BASE_URL", "http://host.docker.internal:11434") or "http://host.docker.internal:11434"
+            num_ctx = getattr(settings, "OLLAMA_NUM_CTX", 2048)
+            print(f"🤖 Initializing {model_name} via Ollama ({base}), num_ctx={num_ctx}...")
+            self.llm = ChatOllama(
+                model=model_name,
+                base_url=base,
+                temperature=temperature,
+                num_ctx=num_ctx,
+            )
+        elif provider == "openai":
+            openai_model = getattr(settings, "OPENAI_MODEL", "gpt-4o-mini")
+            print(f"🤖 Initializing OpenAI chat model: {openai_model}...")
+            self.llm = ChatOpenAI(
+                model=openai_model,
+                api_key=getattr(settings, "OPENAI_API_KEY", ""),
+                temperature=temperature,
+            )
+        elif provider == "gemini":
+            gemini_model = getattr(settings, "GEMINI_MODEL", "gemini-1.5-flash")
+            print(f"🤖 Initializing Gemini chat model: {gemini_model}...")
+            self.llm = ChatGoogleGenerativeAI(
+                model=gemini_model,
+                google_api_key=getattr(settings, "GEMINI_API_KEY", ""),
+                temperature=temperature,
+            )
+        else:
+            raise ValueError(f"Unsupported LLM_PROVIDER: {provider}")
         
         # Main RAG prompt
         self.prompt = ChatPromptTemplate.from_messages([

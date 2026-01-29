@@ -1,4 +1,6 @@
 from langchain_ollama import OllamaEmbeddings
+from langchain_openai import OpenAIEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from app.config import settings
 import numpy as np
 from typing import List
@@ -6,14 +8,30 @@ from app.services.rate_limiter import get_gemini_rate_limiter
 
 
 class EmbeddingService:
-    """Service tạo embeddings bằng Ollama local (nomic-embed-text, 768d)"""
+    """Service tạo embeddings (Ollama / OpenAI / Gemini)"""
     
     def __init__(self):
-        base = getattr(settings, "OLLAMA_BASE_URL", "http://host.docker.internal:11434") or "http://host.docker.internal:11434"
-        self.embeddings = OllamaEmbeddings(
-            model=settings.EMBEDDING_MODEL_NAME,
-            base_url=base,
-        )
+        self.provider = getattr(settings, "EMBEDDING_PROVIDER", "ollama").lower()
+
+        if self.provider == "ollama":
+            base = getattr(settings, "OLLAMA_BASE_URL", "http://host.docker.internal:11434") or "http://host.docker.internal:11434"
+            self.embeddings = OllamaEmbeddings(
+                model=settings.EMBEDDING_MODEL_NAME,
+                base_url=base,
+            )
+        elif self.provider == "openai":
+            self.embeddings = OpenAIEmbeddings(
+                model=getattr(settings, "OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
+                api_key=getattr(settings, "OPENAI_API_KEY", ""),
+            )
+        elif self.provider == "gemini":
+            self.embeddings = GoogleGenerativeAIEmbeddings(
+                model=getattr(settings, "GEMINI_EMBEDDING_MODEL", "models/text-embedding-004"),
+                google_api_key=getattr(settings, "GEMINI_API_KEY", ""),
+            )
+        else:
+            raise ValueError(f"Unsupported EMBEDDING_PROVIDER: {self.provider}")
+
         self.output_dimensionality = settings.DIMENSION_OF_MODEL
     
     def _normalize_embedding(self, embedding: List[float]) -> List[float]:
@@ -32,10 +50,11 @@ class EmbeddingService:
         """
         Tạo embedding cho một đoạn text với truncation và normalization
         """
-        # Rate limiting: đảm bảo không vượt quá 15 RPM
-        get_gemini_rate_limiter().wait_if_needed()
+        # Rate limiting chỉ áp dụng cho provider có quota (Gemini)
+        if self.provider == "gemini":
+            get_gemini_rate_limiter().wait_if_needed()
         
-        # Gọi Ollama embeddings (nomic-embed-text)
+        # Gọi embeddings provider
         embedding = self.embeddings.embed_query(text)
         
         # Truncate về output_dimensionality nếu cần (ví dụ từ 1536 -> 768)
@@ -51,11 +70,12 @@ class EmbeddingService:
         """
         # Batch embed với output_dimensionality
         embeddings: List[List[float]] = []
-        rate_limiter = get_gemini_rate_limiter()
+        rate_limiter = get_gemini_rate_limiter() if self.provider == "gemini" else None
         
         for text in texts:
-            # Rate limiting: đảm bảo không vượt quá 15 RPM
-            rate_limiter.wait_if_needed()
+            # Rate limiting: đảm bảo không vượt quá quota (Gemini)
+            if rate_limiter is not None:
+                rate_limiter.wait_if_needed()
             
             embedding = self.embeddings.embed_query(text)
             # Truncate về output_dimensionality nếu cần

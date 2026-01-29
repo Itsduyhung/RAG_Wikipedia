@@ -2,13 +2,17 @@ import redis
 from rq import Queue
 from app.config import settings
 
-# Tạo Redis connection
-redis_conn = redis.Redis(
-    host=settings.REDIS_HOST,
-    port=settings.REDIS_PORT,
-    db=settings.REDIS_DB,
-    decode_responses=True
-)
+# Tạo Redis connection (ưu tiên REDIS_URL nếu có)
+redis_url = getattr(settings, "REDIS_URL", "") or ""
+if redis_url and not redis_url.startswith("redis://localhost"):
+    redis_conn = redis.from_url(redis_url, decode_responses=True)
+else:
+    redis_conn = redis.Redis(
+        host=settings.REDIS_HOST,
+        port=settings.REDIS_PORT,
+        db=settings.REDIS_DB,
+        decode_responses=True
+    )
 
 # Tạo queue
 process_queue = Queue('process', connection=redis_conn)

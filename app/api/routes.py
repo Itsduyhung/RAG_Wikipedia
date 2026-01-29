@@ -236,24 +236,53 @@ async def process_document(
         doc_id = str(document.id)  # type: ignore[arg-type]
         
         # Queue job để xử lý toàn bộ (ingest + chunk)
-        queue_process_job(
-            job_id=job_id,
-            document_id=doc_id,
-            file_path=normalized_path,
-            source_type="upload",
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            batch_id=batch_id,
-            total_files=len(files)
-        )
-        
-        results.append(FileUploadResult(
-            filename=file_name,
-            status="processing",
-            job_id=job_id,
-            document_id=doc_id,
-            message="Document đang được xử lý (ingest + chunk)"
-        ))
+        try:
+            queue_process_job(
+                job_id=job_id,
+                document_id=doc_id,
+                file_path=normalized_path,
+                source_type="upload",
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                batch_id=batch_id,
+                total_files=len(files)
+            )
+            results.append(FileUploadResult(
+                filename=file_name,
+                status="processing",
+                job_id=job_id,
+                document_id=doc_id,
+                message="Document đang được xử lý (ingest + chunk)"
+            ))
+        except Exception as e:
+            # If Redis/worker isn't available (common on Render), process inline so user can still ingest.
+            # Inline mode is best for small files; large files should use Redis + background worker.
+            from app.workers.process_worker import process_document as process_document_inline
+            try:
+                process_document_inline(
+                    job_id=f"inline_{job_id}",
+                    document_id=doc_id,
+                    file_path=normalized_path,
+                    source_type="upload",
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap,
+                    batch_id=None
+                )
+                results.append(FileUploadResult(
+                    filename=file_name,
+                    status="completed",
+                    job_id=f"inline_{job_id}",
+                    document_id=doc_id,
+                    message="Đã xử lý inline (không dùng Redis queue)"
+                ))
+            except Exception as inner:
+                results.append(FileUploadResult(
+                    filename=file_name,
+                    status="failed",
+                    job_id=job_id,
+                    document_id=doc_id,
+                    message=f"Queue error: {e}. Inline error: {inner}"
+                ))
     
     return MultiFileUploadResponse(
         total_files=len(files),

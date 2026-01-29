@@ -6,7 +6,7 @@ import re
 import math
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import text, func
+from sqlalchemy import text, func, bindparam
 from app.database.models import Chunk, Document
 from app.services.embedding_service import get_embedding_service
 
@@ -60,6 +60,84 @@ class SearchService:
         if self._auto_stopwords is None:
             self._auto_stopwords = self._build_auto_stopwords()
         return self._auto_stopwords
+
+    def _fts_search(
+        self,
+        query: str,
+        k: int = 10,
+        document_ids: Optional[List[str]] = None,
+        config: str = "simple",
+    ) -> List[Dict[str, Any]]:
+        """
+        Fallback search for vanilla Postgres (no ParadeDB).
+        Uses full-text search (tsvector + ts_rank_cd) over content + headers.
+
+        Notes:
+        - Works out-of-the-box on Render PostgreSQL.
+        - Uses 'simple' config for broad language compatibility.
+        """
+        q = " ".join(self._tokenize_vi(query))
+        if not q:
+            return []
+
+        # Build filter fragment for optional document_ids
+        doc_filter = ""
+        if document_ids:
+            doc_filter = " AND c.document_id IN :document_ids"
+
+        search_query = text(f"""
+            SELECT
+                c.id,
+                c.content,
+                c.document_id,
+                c.h1,
+                c.h2,
+                c.h3,
+                c.chunk_index,
+                c.section_id,
+                c.sub_chunk_id,
+                c.metadata as meta_data,
+                ts_rank_cd(
+                    to_tsvector(:cfg, coalesce(c.content,'') || ' ' || coalesce(c.h1,'') || ' ' || coalesce(c.h2,'') || ' ' || coalesce(c.h3,'')),
+                    plainto_tsquery(:cfg, :q)
+                ) as rank
+            FROM chunks c
+            WHERE to_tsvector(:cfg, coalesce(c.content,'') || ' ' || coalesce(c.h1,'') || ' ' || coalesce(c.h2,'') || ' ' || coalesce(c.h3,'')) @@ plainto_tsquery(:cfg, :q)
+            {doc_filter}
+            ORDER BY rank DESC
+            LIMIT :limit_k
+        """)
+
+        params: Dict[str, Any] = {"q": q, "limit_k": k, "cfg": config}
+        if document_ids:
+            search_query = search_query.bindparams(bindparam("document_ids", expanding=True))
+            params["document_ids"] = document_ids
+
+        try:
+            results = self.db.execute(search_query, params).fetchall()
+            return [
+                {
+                    "id": r.id,
+                    "content": r.content,
+                    "document_id": str(r.document_id),
+                    "h1": r.h1,
+                    "h2": r.h2,
+                    "h3": r.h3,
+                    "chunk_index": r.chunk_index,
+                    "section_id": r.section_id,
+                    "sub_chunk_id": r.sub_chunk_id,
+                    "metadata": r.meta_data,
+                    "score": float(r.rank) if r.rank else 0.0,
+                }
+                for r in results
+            ]
+        except Exception as e:
+            print(f"❌ FTS search error: {e}")
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
+            return []
     
     def bm25_search(
         self, 
@@ -87,8 +165,7 @@ class SearchService:
             parts.append(f"(content:{t} OR h1:{t} OR h2:{t} OR h3:{t})")
         paradedb_query = " AND ".join(parts)
         
-        # Build ParadeDB search query
-        # Use the BM25 index created on chunks table
+        # Build ParadeDB search query (only works when ParadeDB is installed)
         search_query = text("""
             SELECT 
                 c.id,
@@ -140,33 +217,8 @@ class SearchService:
                 self.db.rollback()
             except Exception:
                 pass
-            return []
-        
-        # Filter by document_ids if provided
-        if document_ids:
-            base_query = base_query.filter(Chunk.document_id.in_(document_ids))
-        
-        # Order by rank and limit
-        results = base_query.order_by(text('rank DESC')).limit(k).all()
-        
-        print(f"📊 BM25 raw results: {len(results)} chunks")
-        
-        return [
-            {
-                'id': r.id,
-                'content': r.content,
-                'document_id': str(r.document_id),
-                'h1': r.h1,
-                'h2': r.h2,
-                'h3': r.h3,
-                'chunk_index': r.chunk_index,
-                'section_id': r.section_id,
-                'sub_chunk_id': r.sub_chunk_id,
-                'metadata': r.meta_data,
-                'score': float(r.rank) if r.rank else 0.0
-            }
-            for r in results
-        ]
+            # Fallback for Render/vanilla Postgres (no ParadeDB schema)
+            return self._fts_search(query=query, k=k, document_ids=document_ids)
     
     def semantic_search(
         self, 

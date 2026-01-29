@@ -239,6 +239,29 @@ def convert_html_to_normalized_md(html_file_path, output_md_file_path=None):
     return output_md_file_path
 
 
+def convert_file_to_normalized_md(file_path: str, output_md_file_path: str | None = None) -> str:
+    """
+    Convert an input file to normalized markdown.
+    - If input is already .md/.markdown, just normalize and save.
+    - Otherwise, use MarkItDown to convert, then normalize.
+    """
+    suffix = Path(file_path).suffix.lower()
+    if suffix in [".md", ".markdown"]:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            raw = f.read()
+        normalized = normalize_markdown(raw)
+        if output_md_file_path is None:
+            name = Path(file_path).stem
+            output_md_file_path = f"data/processed_data/{name}.md"
+        os.makedirs(os.path.dirname(output_md_file_path), exist_ok=True)
+        with open(output_md_file_path, "w", encoding="utf-8") as f:
+            f.write(normalized)
+        print(f"Đã lưu markdown đã chuẩn hóa vào: {output_md_file_path}")
+        return output_md_file_path
+
+    return convert_html_to_normalized_md(file_path, output_md_file_path=output_md_file_path)
+
+
 # Tạo database session cho worker
 engine = create_engine(settings.DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)
@@ -328,7 +351,7 @@ def process_document(
         
         step_start = time.time()
         print(f"📝 Converting to Markdown: {cleaned_file_path}")
-        md_file_path = convert_html_to_normalized_md(cleaned_file_path)
+        md_file_path = convert_file_to_normalized_md(cleaned_file_path)
         step_duration = time.time() - step_start
         print(f"✅ Converted to Markdown: {md_file_path}")
         print(f"⏱️  Markdown Conversion took: {step_duration:.2f}s")
