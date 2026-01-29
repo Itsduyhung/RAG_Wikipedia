@@ -1,6 +1,12 @@
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 from typing import Optional
 import os
+
+
+def _strip_str(v: str) -> str:
+    """Strip whitespace/newlines from env strings (avoid Ollama 'unqualified name' etc)."""
+    return (v or "").strip()
 
 
 class Settings(BaseSettings):
@@ -41,7 +47,14 @@ class Settings(BaseSettings):
     DIMENSION_OF_MODEL: int = 768
     # Context size cho Ollama chat (qwen2.5:1.5b = 2048; mistral = 8192)
     OLLAMA_NUM_CTX: int = 2048
-    
+
+    @field_validator("OLLAMA_BASE_URL", "LLM_MODEL_NAME", "EMBEDDING_MODEL_NAME", mode="before")
+    @classmethod
+    def strip_ollama_strings(cls, v):
+        if isinstance(v, str):
+            return _strip_str(v)
+        return v
+
     # Pinecone (Legacy - optional, for backward compatibility)
     PINECONE_API_KEY: Optional[str] = None
     
